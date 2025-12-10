@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 # Configuration
-IMAGE_PATH = Path("data/parking_lot_base.png")
+IMAGE_PATH = Path("data/frames/frame_0000.png")
 OUTPUT_JSON = Path("data/parking_spot_coordinates.json")
 NUM_SPOTS = 18
 

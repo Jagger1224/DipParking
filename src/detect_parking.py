@@ -11,22 +11,26 @@ import numpy as np
 from pathlib import Path
 from ultralytics import YOLO
 
-# Configuration
+# Configuration of paths
 FRAMES_DIR = Path("data/frames")
-SPOTS_JSON = Path("data/parking_spot_coordinates.json")
+SPOTS_JSON = Path("data/parking_spot_coordinates.json") 
 OUTPUT_DIR = Path("results/detections")
-MODEL_PATH = "yolov8n.pt"  # Will auto-download if not present
+MODEL_PATH = "yolov8s.pt"  # Will auto-download if not present, yolov8n.pt is nano
 
-# Detection settings
-CONFIDENCE_THRESHOLD = 0.5  # YOLO confidence threshold
-IOU_THRESHOLD = 0.3         # Overlap threshold for occupancy
+# Detection settings, can vary 
+CONFIDENCE_THRESHOLD = 0.4  # YOLO confidence threshold, how confident YOLO must be 
+IOU_THRESHOLD = 0.2         # Overlap threshold for occupancy, how much overlap between car and spot = overlap
 
 # Vehicle class IDs in COCO dataset
 VEHICLE_CLASSES = [2, 3, 5, 7]  # car, motorcycle, bus, truck
 
 
+# reads spot_coordinates.json and loads all 18 spots 
 def load_parking_spots(json_path):
-    """Load parking spot polygons from JSON"""
+    """
+    Load parking spot detection polygons from JSON
+    
+    """
     with open(json_path, 'r') as f:
         spots_data = json.load(f)
     
@@ -40,59 +44,69 @@ def load_parking_spots(json_path):
     return spots
 
 
+
 def detect_vehicles(model, image, conf_threshold):
     """
-    Run YOLO on image and return vehicle detections
+    Runs specified YOLO on image and returns vehicle detections (bounding boxes)
     
     Returns: List of bounding boxes [x1, y1, x2, y2] for detected vehicles
+
     """
-    results = model.predict(image, conf=conf_threshold, verbose=False)[0]
+    results = model.predict(image, conf=conf_threshold, verbose=False)[0]  # runs YOLO 'inference'/detection on an image
     
     detections = []
     for box in results.boxes:
         cls_id = int(box.cls)
         confidence = float(box.conf)
         
-        # Only keep vehicle classes (car, motorcycle, bus, truck)
+        # Filter through and only keep vehicle classes (car, motorcycle, bus, truck)
         if cls_id in VEHICLE_CLASSES:
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             detections.append({
                 'bbox': [int(x1), int(y1), int(x2), int(y2)],
                 'confidence': confidence,
-                'class': cls_id
+                'class': cls_id  # should only be vehicles
             })
     
     return detections
 
 
+# YOLO detections are rectangles so have to convert polgon to bounding boxes
 def polygon_to_bbox(polygon):
     """
     Convert polygon to bounding box
     Input: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
     Output: [min_x, min_y, max_x, max_y]
+
     """
     xs = [p[0] for p in polygon]
     ys = [p[1] for p in polygon]
-    return [min(xs), min(ys), max(xs), max(ys)]
+    return [min(xs), min(ys), max(xs), max(ys)]  # min should help it stay in bounds
 
 
+# Logic for whether or not vehicle and parking spot are overlapping enough to say parking spot is taken
 def compute_iou(bbox1, bbox2):
     """
     Calculate Intersection over Union between two bounding boxes
     Each bbox is [x1, y1, x2, y2]
+
+    For my application, bbox's come from parking spot and vehicle
+
     """
-    # Get intersection rectangle
-    x1 = max(bbox1[0], bbox2[0])
+    # Get intersection rectangle coordinates
+    x1 = max(bbox1[0], bbox2[0])  # max is where overlap begins 
     y1 = max(bbox1[1], bbox2[1])
     x2 = min(bbox1[2], bbox2[2])
-    y2 = min(bbox1[3], bbox2[3])
+    y2 = min(bbox1[3], bbox2[3])  # min is where overlap ends
     
     # Check if there's an intersection
     if x2 <= x1 or y2 <= y1:
         return 0.0
     
-    # Calculate areas
+    # Calculate intersection areas
     intersection = (x2 - x1) * (y2 - y1)
+
+    # Calculate union area Area1 + Area2 - Intersection
     bbox1_area = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
     bbox2_area = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
     union = bbox1_area + bbox2_area - intersection
@@ -100,14 +114,17 @@ def compute_iou(bbox1, bbox2):
     return intersection / union if union > 0 else 0.0
 
 
+# Architect function that runs everything for car detection and overlap calculation 
 def determine_occupancy(spots, detections, iou_threshold):
     """
     Determine which parking spots are occupied based on IoU overlap
     
     Returns: List of spot dictionaries with occupancy info
+
     """
     results = []
     
+    # Loop overall all spots
     for spot in spots:
         # Convert polygon to bounding box for IoU calculation
         spot_bbox = polygon_to_bbox(spot['coordinates'])
@@ -116,11 +133,12 @@ def determine_occupancy(spots, detections, iou_threshold):
         occupied = False
         max_iou = 0.0
         
+        # loop over all/compare all vehicle detections, find max IOU (overlap)
         for detection in detections:
             iou = compute_iou(spot_bbox, detection['bbox'])
             max_iou = max(max_iou, iou)
             
-            if iou >= iou_threshold:
+            if iou >= iou_threshold:  # if ovlerp is > threshold
                 occupied = True
                 # Could break here, but we want to track max_iou
         
